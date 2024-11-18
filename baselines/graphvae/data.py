@@ -10,7 +10,7 @@ class GraphAdjSampler(torch.utils.data.Dataset):
         self.feature_all = []
 
         for G in G_list:
-            adj = nx.to_numpy_matrix(G)
+            adj = nx.to_numpy_array(G)
             # the diagonal entries are 1 since they denote node probability
             self.adj_all.append(
                     np.asarray(adj) + np.identity(G.number_of_nodes()))

@@ -8,8 +8,51 @@ from torch.autograd import Variable
 from torch import optim
 import torch.nn.functional as F
 import torch.nn.init as init
+#import model
 
-import model
+#device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+device = "mps"
+
+class GraphConv(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(GraphConv, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.weight = nn.Parameter(torch.FloatTensor(input_dim, output_dim).to(device))
+        # self.relu = nn.ReLU()
+    def forward(self, x, adj):
+        y = torch.matmul(adj, x)
+        y = torch.matmul(y,self.weight)
+        return y
+    
+class MLP_VAE_plain(nn.Module):
+    def __init__(self, h_size, embedding_size, y_size):
+        super(MLP_VAE_plain, self).__init__()
+        self.encode_11 = nn.Linear(h_size, embedding_size) # mu
+        self.encode_12 = nn.Linear(h_size, embedding_size) # lsgms
+
+        self.decode_1 = nn.Linear(embedding_size, embedding_size)
+        self.decode_2 = nn.Linear(embedding_size, y_size) # make edge prediction (reconstruct)
+        self.relu = nn.ReLU()
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data = init.xavier_uniform(m.weight.data, gain=nn.init.calculate_gain('relu'))
+
+    def forward(self, h):
+        # encoder
+        z_mu = self.encode_11(h)
+        z_lsgms = self.encode_12(h)
+        # reparameterize
+        z_sgm = z_lsgms.mul(0.5).exp_()
+        #eps = Variable(torch.randn(z_sgm.size())).to(device)
+        eps = torch.randn(z_sgm.size(), device=z_sgm.device)
+        z = eps*z_sgm + z_mu
+        # decoder
+        y = self.decode_1(z)
+        y = self.relu(y)
+        y = self.decode_2(y)
+        return y, z_mu, z_lsgms
 
 
 class GraphVAE(nn.Module):
@@ -21,20 +64,20 @@ class GraphVAE(nn.Module):
             latent_dim: dimension of the latent representation of graph.
         '''
         super(GraphVAE, self).__init__()
-        self.conv1 = model.GraphConv(input_dim=input_dim, output_dim=hidden_dim)
+        self.conv1 = GraphConv(input_dim=input_dim, output_dim=hidden_dim)
         self.bn1 = nn.BatchNorm1d(input_dim)
-        self.conv2 = model.GraphConv(input_dim=hidden_dim, output_dim=hidden_dim)
+        self.conv2 = GraphConv(input_dim=hidden_dim, output_dim=hidden_dim)
         self.bn2 = nn.BatchNorm1d(input_dim)
         self.act = nn.ReLU()
 
         output_dim = max_num_nodes * (max_num_nodes + 1) // 2
-        #self.vae = model.MLP_VAE_plain(hidden_dim, latent_dim, output_dim)
-        self.vae = model.MLP_VAE_plain(input_dim * input_dim, latent_dim, output_dim)
-        #self.feature_mlp = model.MLP_plain(latent_dim, latent_dim, output_dim)
+        #self.vae = MLP_VAE_plain(hidden_dim, latent_dim, output_dim)
+        self.vae = MLP_VAE_plain(input_dim * input_dim, latent_dim, output_dim).to(device)
+        #self.feature_mlp = MLP_plain(latent_dim, latent_dim, output_dim)
 
         self.max_num_nodes = max_num_nodes
         for m in self.modules():
-            if isinstance(m, model.GraphConv):
+            if isinstance(m, GraphConv):
                 m.weight.data = init.xavier_uniform(m.weight.data, gain=nn.init.calculate_gain('relu'))
             elif isinstance(m, nn.BatchNorm1d):
                 m.weight.data.fill_(1)
@@ -96,7 +139,7 @@ class GraphVAE(nn.Module):
           The target_ind (connectivity) should be permuted to the curr_ind position.
         '''
         # order curr_ind according to target ind
-        ind = np.zeros(self.max_num_nodes, dtype=np.int)
+        ind = np.zeros(self.max_num_nodes, dtype=int)
         ind[target_ind] = curr_ind
         adj_permuted = torch.zeros((self.max_num_nodes, self.max_num_nodes))
         adj_permuted[:, :] = adj[ind, :]
@@ -153,7 +196,7 @@ class GraphVAE(nn.Module):
         #adj_permuted = self.permute_adj(adj_data, row_ind, col_ind)
         adj_permuted = adj_data
         adj_vectorized = adj_permuted[torch.triu(torch.ones(self.max_num_nodes,self.max_num_nodes) )== 1].squeeze_()
-        adj_vectorized_var = Variable(adj_vectorized).cuda()
+        adj_vectorized_var = Variable(adj_vectorized).to(device)
 
         #print(adj)
         #print('permuted: ', adj_permuted)
@@ -203,6 +246,11 @@ class GraphVAE(nn.Module):
         print(adj_data1)
         print('diff: ', adj_recon_loss)
 
+    # def adj_recon_loss(self, adj_truth, adj_pred):
+    #     return F.binary_cross_entropy(adj_truth, adj_pred)
+
     def adj_recon_loss(self, adj_truth, adj_pred):
-        return F.binary_cross_entropy(adj_truth, adj_pred)
+        eps = 1e-6
+        adj_pred = torch.clamp(adj_pred, min=eps, max=1 - eps)
+        return F.binary_cross_entropy(adj_pred, adj_truth)
 

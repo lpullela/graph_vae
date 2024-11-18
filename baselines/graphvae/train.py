@@ -14,10 +14,13 @@ from torch import optim
 from torch.optim.lr_scheduler import MultiStepLR
 
 import data
-from baselines.graphvae.model import GraphVAE
-from baselines.graphvae.data import GraphAdjSampler
+# from baselines.graphvae.model import GraphVAE
+# from baselines.graphvae.data import GraphAdjSampler
+from model import GraphVAE
+from data import GraphAdjSampler
 
-CUDA = 2
+#device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+device = "mps"
 
 LR_milestones = [500, 1000]
 
@@ -38,14 +41,15 @@ def train(args, dataloader, model):
     scheduler = MultiStepLR(optimizer, milestones=LR_milestones, gamma=args.lr)
 
     model.train()
+    model.to(device)
     for epoch in range(5000):
         for batch_idx, data in enumerate(dataloader):
             model.zero_grad()
             features = data['features'].float()
             adj_input = data['adj'].float()
 
-            features = Variable(features).cuda()
-            adj_input = Variable(adj_input).cuda()
+            features = Variable(features).to(device)
+            adj_input = Variable(adj_input).to(device)
             
             loss = model(features, adj_input)
             print('Epoch: ', epoch, ', Iter: ', batch_idx, ', Loss: ', loss)
@@ -84,8 +88,8 @@ def arg_parse():
 def main():
     prog_args = arg_parse()
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(CUDA)
-    print('CUDA', CUDA)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = str(CUDA)
+    # print('CUDA', CUDA)
     ### running log
 
     if prog_args.dataset == 'enzymes':
@@ -124,7 +128,7 @@ def main():
             dataset, 
             batch_size=prog_args.batch_size, 
             num_workers=prog_args.num_workers)
-    model = build_model(prog_args, max_num_nodes).cuda()
+    model = build_model(prog_args, max_num_nodes).to(device)
     train(prog_args, dataset_loader, model)
 
 
