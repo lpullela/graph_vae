@@ -10,8 +10,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 #import model
 
-#device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-device = "mps"
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 class GraphConv(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -153,7 +152,7 @@ class GraphVAE(nn.Module):
             out = torch.sum(x, dim=1, keepdim=False)
         return out
 
-    def forward(self, input_features, adj):
+    def forward(self, input_features, adj, sim_func_obj):
         #x = self.conv1(input_features, adj)
         #x = self.bn1(x)
         #x = self.act(x)
@@ -176,8 +175,14 @@ class GraphVAE(nn.Module):
         adj_data = adj.cpu().data[0]
         adj_features = torch.sum(adj_data, 1)
 
-        S = self.edge_similarity_matrix(adj_data, recon_adj_tensor, adj_features, out_features,
-                self.deg_feature_similarity)
+
+        if sim_func_obj.sim_func_name == 'original':
+            S = sim_func_obj.edge_similarity_matrix(adj_data, recon_adj_tensor, adj_features, out_features,
+                    self.deg_feature_similarity)
+        elif sim_func_obj.sim_func_name == 'binned': 
+            S = sim_func_obj.edge_similarity_matrix_binning_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                    self.deg_feature_similarity)
+            
 
         # initialization strategies
         init_corr = 1 / self.max_num_nodes
@@ -214,18 +219,33 @@ class GraphVAE(nn.Module):
 
         return loss
 
-    def forward_test(self, input_features, adj):
-        self.max_num_nodes = 4
-        adj_data = torch.zeros(self.max_num_nodes, self.max_num_nodes)
-        adj_data[:4, :4] = torch.FloatTensor([[1,1,0,0], [1,1,1,0], [0,1,1,1], [0,0,1,1]])
-        adj_features = torch.Tensor([2,3,3,2])
+    def forward_test(self, input_features, adj, args):
+        self.max_num_nodes = args.max_num_nodes
+        # adj_data = torch.zeros(self.max_num_nodes, self.max_num_nodes)
+        # adj_data[:4, :4] = torch.FloatTensor([[1,1,0,0], [1,1,1,0], [0,1,1,1], [0,0,1,1]])
+        # adj_features = torch.Tensor([2,3,3,2])
 
-        adj_data1 = torch.zeros(self.max_num_nodes, self.max_num_nodes)
-        adj_data1 = torch.FloatTensor([[1,1,1,0], [1,1,0,1], [1,0,1,0], [0,1,0,1]])
-        adj_features1 = torch.Tensor([3,3,2,2])
-        S = self.edge_similarity_matrix(adj_data, adj_data1, adj_features, adj_features1,
+        # adj_data1 = torch.zeros(self.max_num_nodes, self.max_num_nodes)
+        # adj_data1 = torch.FloatTensor([[1,1,1,0], [1,1,0,1], [1,0,1,0], [0,1,0,1]])
+        # adj_features1 = torch.Tensor([3,3,2,2])
+
+        graph_h = input_features.view(-1, self.max_num_nodes * self.max_num_nodes)
+
+        h_decode, z_mu, z_lsgms = self.vae(graph_h)
+        out = F.sigmoid(h_decode)
+        out_tensor = out.cpu().data
+        recon_adj_lower = self.recover_adj_lower(out_tensor)
+        recon_adj_tensor = self.recover_full_adj_from_lower(recon_adj_lower)
+
+        # set matching features be degree
+        out_features = torch.sum(recon_adj_tensor, 1)
+
+        adj_data = adj.cpu().data[0]
+        adj_features = torch.sum(adj_data, 1)
+
+        S = self.edge_similarity_matrix(adj_data, recon_adj_tensor, adj_features, out_features,
                 self.deg_feature_similarity)
-
+        
         # initialization strategies
         init_corr = 1 / self.max_num_nodes
         init_assignment = torch.ones(self.max_num_nodes, self.max_num_nodes) * init_corr
@@ -242,9 +262,11 @@ class GraphVAE(nn.Module):
         permuted_adj = self.permute_adj(adj_data, row_ind, col_ind)
         print('permuted: ', permuted_adj)
 
-        adj_recon_loss = self.adj_recon_loss(permuted_adj, adj_data1)
-        print(adj_data1)
+        adj_recon_loss = self.adj_recon_loss(permuted_adj, recon_adj_tensor)
+        print(recon_adj_tensor)
         print('diff: ', adj_recon_loss)
+
+        return adj_recon_loss
 
     # def adj_recon_loss(self, adj_truth, adj_pred):
     #     return F.binary_cross_entropy(adj_truth, adj_pred)
