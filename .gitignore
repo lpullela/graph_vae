@@ -1,3 +1,5 @@
+baselines/graphvae/plots
+baselines/graphvae/results
 
 *.pyc
 *.sw?

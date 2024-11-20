@@ -1,4 +1,6 @@
 import torch 
+import numpy as np
+import networkx as nx
 from collections import defaultdict
 
 class SimilarityFunctions(): 
@@ -76,3 +78,9 @@ class SimilarityFunctions():
                                     )
 
         return S
+    
+    # another idea is maybe trying to use a page rank algo? 
+    # we can rank all the nodes by 'influence' and then bin them
+    # and then instead of binning on degree we can bin on rank
+    # just an idea
+    

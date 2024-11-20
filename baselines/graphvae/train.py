@@ -97,32 +97,34 @@ def build_model(args, max_num_nodes):
     model = GraphVAE(input_dim, 64, 256, max_num_nodes)
     return model
 
-def save_result(test_loss): 
+def save_result(args, test_loss, training_time): 
     if isinstance(test_loss, torch.Tensor):
         test_loss = test_loss.item()  
     
-    time_step = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = "baselines/graphvae/results"
     os.makedirs(output_dir, exist_ok=True)
-    file_path = os.path.join(output_dir, f"test_loss_{time_step}.txt")
+    file_path = os.path.join(output_dir, f"test_loss_{args.similarity_function}_{args.epochs}_{args.max_num_nodes}.txt")
 
     with open(file_path, "w") as f:
         f.write(f"Test Loss: {test_loss}\n")
+        f.write(f"Training Time: {training_time}\n")
     
     print(f"Test loss saved to {file_path}")
 
-def save_plot(lst): 
+def save_plot(lst, args): 
     lst = [x.item() if isinstance(x, torch.Tensor) else x for x in lst]
 
     plt.plot(lst)
     plt.xlabel("Mini batch")
     plt.ylabel("Loss (BCE + KL-Div)")
     plt.title("Training Loss")
-    time_step = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = "baselines/graphvae/plots"
     os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(os.path.join(output_dir, f"training_loss_{time_step}.png"))
+    plt.savefig(os.path.join(output_dir, f"tr_loss_{args.similarity_function}_{args.epochs}_{args.max_num_nodes}.png"))
     plt.clf()
+
+    array_path = os.path.join(output_dir, f"tr_loss_{args.similarity_function}_{args.epochs}_{args.max_num_nodes}.npy")
+    np.save(array_path, lst)
 
 def train(args, dataloader, model):
     # set timer
@@ -156,15 +158,16 @@ def train(args, dataloader, model):
             scheduler.step()
             break
 
-    # save plot to plots dir
-    save_plot(loss_logger)
-
     end = time.time()
     length = end - start
+
+    save_plot(loss_logger, args)
     print("Training length in seconds: ", length)
     print("Training length in minutes: ", length/60)
 
-def test(args, dataloader, model): 
+    return length
+
+def test(args, dataloader, model, time): 
 
     test_loss = 0
     model.eval()
@@ -180,7 +183,7 @@ def test(args, dataloader, model):
 
     print("test loss: ", test_loss)
     # save result (test loss) to results dir 
-    save_result(test_loss)
+    save_result(args, test_loss, time)
 
     return test_loss
 
@@ -268,9 +271,9 @@ def main():
         num_workers=prog_args.num_workers)
     
     model = build_model(prog_args, max_num_nodes).to(device)
-    train(prog_args, dataset_loader, model)
+    time = train(prog_args, dataset_loader, model)
 
-    test(prog_args, dataset_loader_test, model)
+    test(prog_args, dataset_loader_test, model, time)
 
 
 if __name__ == '__main__':
