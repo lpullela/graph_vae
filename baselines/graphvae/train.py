@@ -217,7 +217,7 @@ def arg_parse():
                         num_workers=1,
                         max_num_nodes=-1,
                         similarity_function='original', 
-                        epochs=5000)
+                        epochs=25)
     return parser.parse_args()
 
 def main():

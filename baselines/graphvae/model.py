@@ -151,6 +151,29 @@ class GraphVAE(nn.Module):
         elif self.pool == 'sum':
             out = torch.sum(x, dim=1, keepdim=False)
         return out
+    
+    def forward_train_no_matching(self, input_features, adj): # this is purely for benchmarking/control
+        graph_h = input_features.view(-1, self.max_num_nodes * self.max_num_nodes)
+        # vae
+        h_decode, z_mu, z_lsgms = self.vae(graph_h)
+        out = F.sigmoid(h_decode)
+
+        adj_data = adj.cpu().data[0]
+        adj_vectorized = adj_data[torch.triu(torch.ones(self.max_num_nodes,self.max_num_nodes) )== 1].squeeze_()
+        adj_vectorized_var = Variable(adj_vectorized).to(device)
+
+        adj_recon_loss = self.adj_recon_loss(adj_vectorized_var, out[0])
+        print('recon: ', adj_recon_loss)
+        print(adj_vectorized_var)
+        print(out[0])
+
+        loss_kl = -0.5 * torch.sum(1 + z_lsgms - z_mu.pow(2) - z_lsgms.exp())
+        loss_kl /= self.max_num_nodes * self.max_num_nodes # normalize
+        print('kl: ', loss_kl)
+
+        loss = adj_recon_loss + loss_kl
+
+        return loss
 
     def forward(self, input_features, adj, sim_func_obj):
         #x = self.conv1(input_features, adj)
@@ -161,6 +184,10 @@ class GraphVAE(nn.Module):
 
         # pool over all nodes 
         #graph_h = self.pool_graph(x)
+
+        if sim_func_obj.sim_func_name == 'none': 
+            return self.forward_train_no_matching(input_features, adj)
+        
         graph_h = input_features.view(-1, self.max_num_nodes * self.max_num_nodes)
         # vae
         h_decode, z_mu, z_lsgms = self.vae(graph_h)
@@ -182,8 +209,10 @@ class GraphVAE(nn.Module):
         elif sim_func_obj.sim_func_name == 'binned': 
             S = sim_func_obj.edge_similarity_matrix_binning_method(adj_data, recon_adj_tensor, adj_features, out_features,
                     self.deg_feature_similarity)
+        elif sim_func_obj.sim_func_name == 'page_rank': 
+            S = sim_func_obj.edge_similarity_matrix_page_rank_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                    self.deg_feature_similarity)
             
-
         # initialization strategies
         init_corr = 1 / self.max_num_nodes
         init_assignment = torch.ones(self.max_num_nodes, self.max_num_nodes) * init_corr
@@ -198,8 +227,8 @@ class GraphVAE(nn.Module):
         print('row: ', row_ind)
         print('col: ', col_ind)
         # order row index according to col index
-        #adj_permuted = self.permute_adj(adj_data, row_ind, col_ind)
-        adj_permuted = adj_data
+        adj_permuted = self.permute_adj(adj_data, row_ind, col_ind)
+        #adj_permuted = adj_data
         adj_vectorized = adj_permuted[torch.triu(torch.ones(self.max_num_nodes,self.max_num_nodes) )== 1].squeeze_()
         adj_vectorized_var = Variable(adj_vectorized).to(device)
 
