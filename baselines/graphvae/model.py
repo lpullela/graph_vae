@@ -212,6 +212,9 @@ class GraphVAE(nn.Module):
         elif sim_func_obj.sim_func_name == 'page_rank': 
             S = sim_func_obj.edge_similarity_matrix_page_rank_method(adj_data, recon_adj_tensor, adj_features, out_features,
                     self.deg_feature_similarity)
+        elif sim_func_obj.sim_func_name == 'community':
+            S = sim_func_obj.edge_similarity_matrix_community_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                    self.deg_feature_similarity)
             
         # initialization strategies
         init_corr = 1 / self.max_num_nodes
