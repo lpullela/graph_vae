@@ -32,15 +32,23 @@ class SimilarityFunctions():
         return S
     
     def bin_nodes_by_degree(self, adj, binary=True, threshold=0.8):
-        # Add weighted degree consideration
-        weighted_degrees = torch.sum(adj, dim=1)
-        binary_degrees = torch.sum((adj > threshold).float(), dim=1)
         
+        if not binary: 
+            binary_adj = (adj > threshold).float()
+        else: 
+            binary_adj = adj
+        degrees = torch.sum(binary_adj, dim=1)
         bins = defaultdict(list)
-        for node, (w_deg, b_deg) in enumerate(zip(weighted_degrees, binary_degrees)):
-            # Create composite key using both degrees
-            key = (int(b_deg.item()), int(w_deg.item() * 10) / 10)
-            bins[key].append(node)
+        for node, degree in enumerate(degrees):
+            #bins[int(degree.item())].append(node)
+            degree_int = int(degree.item())
+            for offset in [-1, 0, 1]:
+                # instead of mapping to only one possible degree, threshold to +/- 1
+                # mapping nodes to a range of degrees is producing better results than mapping to one deg
+                bin_key = degree_int + offset
+                if bin_key >= 0:
+                    bins[bin_key].append(node)
+
         return bins
 
     # modified similarity function with binning method
