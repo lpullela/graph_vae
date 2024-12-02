@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -38,12 +39,142 @@ def simple_binned_similarity(adj, adj_recon, matching_features):
     return np.mean(binned_degrees)
 
 # currently broken
-def simple_page_rank_similarity(adj, adj_recon, matching_features):
-    G = nx.from_numpy_array(adj)
-    G_recon = nx.from_numpy_array(adj_recon)
-    pr = nx.pagerank(G)
-    pr_recon = nx.pagerank(G_recon)
-    return np.mean([pr[i] * pr_recon[i] for i in range(len(pr))])
+def simple_page_rank_similarity_binning_method(adj, adj_recon, matching_features, matching_features_recon):
+    def compute_page_rank(A):
+        G = nx.from_numpy_array(A)
+        rank_dict = nx.pagerank(G)
+        return rank_dict
+
+    rank_dict_adj = compute_page_rank(adj)
+    rank_dict_adj_recon = compute_page_rank(adj_recon)
+
+    # Bin nodes based on their PageRank values
+    def binning_page_rank(rank_dict, num_bins=5):
+        sorted_ranks = sorted(rank_dict.items(), key=lambda x: x[1])
+        binned_dict = {}
+        bin_size = len(rank_dict) // num_bins
+
+        for bin_index in range(num_bins):
+            start_idx = bin_index * bin_size
+            end_idx = (bin_index + 1) * bin_size if bin_index < num_bins - 1 else len(rank_dict)
+
+            # Collect nodes in the bin
+            binned_nodes = [node for node, _ in sorted_ranks[start_idx:end_idx]]
+            binned_dict[bin_index] = binned_nodes
+
+        return binned_dict
+
+    adj_bins = binning_page_rank(rank_dict_adj)
+    adj_recon_bins = binning_page_rank(rank_dict_adj_recon)
+
+    S = np.zeros((adj.shape[0], adj.shape[0], adj.shape[0], adj.shape[0]))
+
+    for rank_bin in adj_bins:
+        if rank_bin in adj_recon_bins:
+            adj_nodes = adj_bins[rank_bin]
+            adj_recon_nodes = adj_recon_bins[rank_bin]
+
+            for i in adj_nodes:
+                for j in adj_nodes:
+                    if i == j:
+                        # Case when i == j
+                        for a in adj_recon_nodes:
+                            S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * \
+                                            np.dot(matching_features[i], matching_features_recon[a])
+                    else:
+                        # Case when i != j
+                        for a in adj_recon_nodes:
+                            for b in adj_recon_nodes:
+                                if b == a:
+                                    continue
+                                S[i, j, a, b] = (
+                                    adj[i, j] * adj[i, i] * adj[j, j] *
+                                    adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+                                )
+
+    return np.mean(S)
+
+# Community-detection-based similarity function
+def simple_community_similarity(adj, adj_recon, matching_features, matching_features_recon):
+    S = np.zeros((adj.shape[0], adj.shape[0], adj.shape[0], adj.shape[0]))
+
+    # numpy bug fix
+    if isinstance(adj, torch.Tensor):
+        adj = adj.cpu().numpy()
+    if isinstance(adj_recon, torch.Tensor):
+        adj_recon = adj_recon.cpu().numpy()
+
+    communities = find_communities(adj)
+    communities_recon = find_communities(adj_recon)
+
+    for comm_id, nodes in communities.items():
+        comm_size = len(nodes)
+        for recon_comm_id, recon_nodes in communities_recon.items():
+            # Allow small discrepancies in community size
+            if abs(len(recon_nodes) - comm_size) <= 2:
+                for i in nodes:
+                    for j in nodes:
+                        if i == j:
+                            for a in recon_nodes:
+                                S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * \
+                                                np.dot(matching_features[i], matching_features_recon[a])
+                        else:
+                            for a in recon_nodes:
+                                for b in recon_nodes:
+                                    if b == a:
+                                        continue
+                                    S[i, j, a, b] = (
+                                        adj[i, j] * adj[i, i] * adj[j, j] *
+                                        adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+                                    )
+
+    return np.mean(S)
+
+# Helper function to find communities
+def find_communities(adj):
+    n = adj.shape[0]
+    communities = {i: [i] for i in range(n)}
+    
+    def calculate_modularity(adj, communities):
+        m = np.sum(adj) / 2
+        Q = 0
+        for nodes in communities.values():
+            for i in nodes:
+                for j in nodes:
+                    A_ij = adj[i, j]
+                    k_i = np.sum(adj[i])
+                    k_j = np.sum(adj[j])
+                    Q += (A_ij - (k_i * k_j) / (2 * m))
+        return Q / (2 * m)
+
+    def merge_communities(communities, adj):
+        best_Q = calculate_modularity(adj, communities)
+        best_merge = None
+        keys = list(communities.keys())
+        
+        for i in range(len(keys)):
+            for j in range(i + 1, len(keys)):
+                temp_communities = communities.copy()
+                temp_communities[keys[i]] = communities[keys[i]] + communities[keys[j]]
+                del temp_communities[keys[j]]
+                
+                Q = calculate_modularity(adj, temp_communities)
+                if Q > best_Q:
+                    best_Q = Q
+                    best_merge = (keys[i], keys[j])
+        
+        return best_merge, best_Q
+
+    while True:
+        best_merge, best_Q = merge_communities(communities, adj)
+        if best_merge is None:
+            break
+        
+        i, j = best_merge
+        communities[i].extend(communities[j])
+        del communities[j]
+    
+    return communities
 
 def simple_binned_similarity_binning_method(adj, adj_recon, matching_features, matching_features_recon):
     # Bin nodes by degree
@@ -96,9 +227,9 @@ def simple_binned_similarity_binning_method(adj, adj_recon, matching_features, m
 def analyze_similarity_performance(num_graphs=400, num_nodes=10, edge_prob_range=(0.2, 0.8)):
     sim_funcs = {
         'Original': simple_edge_similarity,
-        'Binned': simple_binned_similarity_binning_method
-        # 'simple_binned': simple_binned_similarity,
-        # 'simple_page_rank': simple_page_rank_similarity
+        'Binned': simple_binned_similarity_binning_method,
+        'PageRank': simple_page_rank_similarity_binning_method,
+        'Community': simple_community_similarity
     }
     
     performance_metrics = {func: {
