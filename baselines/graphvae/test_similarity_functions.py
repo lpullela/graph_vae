@@ -224,7 +224,7 @@ def simple_binned_similarity_binning_method(adj, adj_recon, matching_features, m
 
     return np.mean(S)
 
-def analyze_similarity_performance(num_graphs=400, num_nodes=10, edge_prob_range=(0.2, 0.8)):
+def analyze_similarity_performance(num_graphs=200, num_nodes=10, edge_prob_range=(0.2, 0.8)):
     sim_funcs = {
         'Original': simple_edge_similarity,
         'Binned': simple_binned_similarity_binning_method,
@@ -236,7 +236,8 @@ def analyze_similarity_performance(num_graphs=400, num_nodes=10, edge_prob_range
         'degree_correlation': [],
         'clustering_correlation': [],
         'density_correlation': [],
-        'avg_path_length_correlation': []
+        'avg_path_length_correlation': [],
+        'diameter_correlation': []
     } for func in sim_funcs}
     
     for _ in range(num_graphs):
@@ -280,6 +281,9 @@ def analyze_similarity_performance(num_graphs=400, num_nodes=10, edge_prob_range
                 'avg_path_length_correlation': abs(
                     nx.average_shortest_path_length(graph1) - 
                     nx.average_shortest_path_length(graph2)
+                ),
+                'diameter_correlation': abs(
+                    nx.diameter(graph1) - nx.diameter(graph2)
                 )
             }
             
@@ -291,10 +295,10 @@ def analyze_similarity_performance(num_graphs=400, num_nodes=10, edge_prob_range
 def visualize_similarity_performance(performance_metrics):
     plt.figure(figsize=(15, 10))
     metrics = ['degree_correlation', 'clustering_correlation', 
-               'density_correlation', 'avg_path_length_correlation']
+               'density_correlation', 'avg_path_length_correlation', 'diameter_correlation']
     
     for i, metric in enumerate(metrics, 1):
-        plt.subplot(2, 2, i)
+        plt.subplot(2, 3, i)
         for func_name, data in performance_metrics.items():
             similarities, correlations = zip(*data[metric])
             plt.scatter(similarities, correlations, label=func_name, alpha=0.7)
