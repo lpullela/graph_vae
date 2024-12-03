@@ -224,7 +224,7 @@ def simple_binned_similarity_binning_method(adj, adj_recon, matching_features, m
 
     return np.mean(S)
 
-def analyze_similarity_performance(num_graphs=200, num_nodes=10, edge_prob_range=(0.2, 0.8)):
+def analyze_similarity_performance(num_graphs=1000, num_nodes=10, edge_prob_range=(0.2, 0.8)):
     sim_funcs = {
         'Original': simple_edge_similarity,
         'Binned': simple_binned_similarity_binning_method,
@@ -233,11 +233,11 @@ def analyze_similarity_performance(num_graphs=200, num_nodes=10, edge_prob_range
     }
     
     performance_metrics = {func: {
-        'degree_correlation': [],
-        'clustering_correlation': [],
-        'density_correlation': [],
-        'avg_path_length_correlation': [],
-        'diameter_correlation': []
+        'degree_capture': [],
+        'clustering_capture': [],
+        'density_capture': [],
+        'avg_path_length_capture': [],
+        'diameter_capture': []
     } for func in sim_funcs}
     
     for _ in range(num_graphs):
@@ -261,28 +261,28 @@ def analyze_similarity_performance(num_graphs=200, num_nodes=10, edge_prob_range
             similarity = sim_func(adj1, adj1, matching_features1, matching_features1)
             
             metrics = {
-                # Degree-degree correlation
-                # Higher means more similar degree distribution
-                'degree_correlation': stats.pearsonr(
+                # KL divergence of degree distributions
+                # Smaller means more similar degree distribution
+                'degree_capture': stats.entropy(
                     [d for n, d in graph1.degree()], 
                     [d for n, d in graph2.degree()]
-                )[0],
-                # Clustering coefficient correlation
-                # Higher means more similar clustering coefficient
-                'clustering_correlation': stats.pearsonr(
+                ),
+                # KL divergence of clustering coefficientsw
+                # Smaller means more similar clustering coefficients
+                'clustering_capture': stats.entropy(
                     list(nx.clustering(graph1).values()), 
                     list(nx.clustering(graph2).values())
-                )[0],
+                ),
                 # Absolute difference in graph density (edges / max edges)
                 # Smaller absolute value means more similar density
-                'density_correlation': abs(nx.density(graph1) - nx.density(graph2)),
+                'density_capture': abs(nx.density(graph1) - nx.density(graph2)),
                 # Absolute difference in APL
                 # Smaller absolute value means more similar APL
-                'avg_path_length_correlation': abs(
+                'avg_path_length_capture': abs(
                     nx.average_shortest_path_length(graph1) - 
                     nx.average_shortest_path_length(graph2)
                 ),
-                'diameter_correlation': abs(
+                'diameter_capture': abs(
                     nx.diameter(graph1) - nx.diameter(graph2)
                 )
             }
@@ -294,8 +294,8 @@ def analyze_similarity_performance(num_graphs=200, num_nodes=10, edge_prob_range
 
 def visualize_similarity_performance(performance_metrics):
     plt.figure(figsize=(15, 10))
-    metrics = ['degree_correlation', 'clustering_correlation', 
-               'density_correlation', 'avg_path_length_correlation', 'diameter_correlation']
+    metrics = ['degree_capture', 'clustering_capture', 
+               'density_capture', 'avg_path_length_capture', 'diameter_capture']
     
     for i, metric in enumerate(metrics, 1):
         plt.subplot(2, 3, i)
@@ -305,7 +305,7 @@ def visualize_similarity_performance(performance_metrics):
         
         plt.title(f'Performance on {metric.replace("_", " ").title()}')
         plt.xlabel('Similarity Score')
-        plt.ylabel('Graph Characteristic Correlation')
+        plt.ylabel('Difference in Graph Characteristic')
         plt.legend()
     
     plt.tight_layout()
