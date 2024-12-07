@@ -3,7 +3,7 @@
 
 # can change default values
 EPOCHS=20
-MAX_NUM_NODES=30
+MAX_NUM_NODES=38
 DATASET="enzymes"
 
 # parsing args
@@ -14,7 +14,7 @@ while getopts e:n: flag; do
     esac
 done
 
-SIMILARITY_FUNCTIONS=("dummy" "original" "binned" "page_rank")
+SIMILARITY_FUNCTIONS=("none" "binned" "page_rank" "original" )
 
 for FUNC in "${SIMILARITY_FUNCTIONS[@]}"; do
     echo "Running with similarity_function=${FUNC}, epochs=${EPOCHS}, max_num_nodes=${MAX_NUM_NODES}"

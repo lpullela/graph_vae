@@ -2,16 +2,35 @@ import torch
 import numpy as np
 import networkx as nx
 from collections import defaultdict
+import time
+import copy
+from scipy.sparse.linalg import eigsh
+from sklearn.cluster import KMeans
 
 class SimilarityFunctions(): 
 
     def __init__(self,similarity_function, max_nodes): 
         self.sim_func_name = similarity_function
         self.max_num_nodes = max_nodes
+        self._timer_start = None  
+        self._elapsed_time = 0.0  
+
+    def _start_timer(self):
+        if self._timer_start is None:
+            self._timer_start = time.time()
+
+    def _stop_timer(self):
+        if self._timer_start is not None:
+            self._elapsed_time += time.time() - self._timer_start
+            self._timer_start = None
+
+    def get_elapsed_time(self):
+        return self._elapsed_time
 
     # original brute force solution
     def edge_similarity_matrix(self, adj, adj_recon, matching_features,
                 matching_features_recon, sim_func):
+        self._start_timer()
         S = torch.zeros(self.max_num_nodes, self.max_num_nodes,
                         self.max_num_nodes, self.max_num_nodes)
         for i in range(self.max_num_nodes):
@@ -29,9 +48,10 @@ class SimilarityFunctions():
                                 continue
                             S[i, j, a, b] = adj[i, j] * adj[i, i] * adj[j, j] * \
                                             adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+        self._stop_timer()
         return S
     
-    def bin_nodes_by_degree(self, adj, binary=True, threshold=0.8):
+    def bin_nodes_by_degree(self, adj, binary=True, threshold=0.5):
         
         if not binary: 
             binary_adj = (adj > threshold).float()
@@ -54,8 +74,17 @@ class SimilarityFunctions():
     # modified similarity function with binning method
     def edge_similarity_matrix_binning_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
 
+        self._start_timer()
         adj_bins = self.bin_nodes_by_degree(adj)
         adj_recon_bins = self.bin_nodes_by_degree(adj_recon, binary=False)
+
+        # for testing purposes in bin density
+        n = adj.shape[0]  
+        k = len(adj_recon_bins.keys())  
+        nk_ratio = n / k
+        with open("baselines/graphvae/results/nk_ratios.txt", "a") as file:  
+            file.write(f"{nk_ratio}\n")
+        # can delete the above or comment
 
         S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
 
@@ -82,6 +111,7 @@ class SimilarityFunctions():
                                         * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
                                     )
 
+        self._stop_timer()
         return S
     
     # another idea is maybe trying to use a page rank algo? 
@@ -108,7 +138,6 @@ class SimilarityFunctions():
             start_idx = bin_index * bin_size
             end_idx = (bin_index + 1) * bin_size if bin_index < num_bins - 1 else len(rank_dict)
 
-            # Collect nodes in the bin
             binned_nodes = [node for node, _ in sorted_ranks[start_idx:end_idx]]
             binned_dict[bin_index] = binned_nodes
 
@@ -116,6 +145,7 @@ class SimilarityFunctions():
     
     
     def edge_similarity_matrix_page_rank_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
+        self._start_timer()
         rank_dict_adj = self.compute_page_rank(adj)
         rank_dict_adj_recon = self.compute_page_rank(adj_recon)
         
@@ -146,6 +176,7 @@ class SimilarityFunctions():
                                         * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
                                     )
 
+        self._stop_timer()
         return S
     
     #Girvan-Newman community detection
@@ -198,6 +229,7 @@ class SimilarityFunctions():
     # Basic idea: take advantage of repetition in long, chain-like structures (e.g. enzymes)
     # Only compare nodes if they are in the same community
     def edge_similarity_matrix_community_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
+        self._start_timer()
         S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
         
         # numpy bug fix
@@ -228,7 +260,153 @@ class SimilarityFunctions():
                                             adj[i, j] * adj[i, i] * adj[j, j] * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
                                         )
 
+        self._stop_timer()
         return S
+    
+    # louvain communities
+    def find_louvain_communities(self, adj, seed=42): # randomness in initialization of singleton communities on first it.
+        adj_matrix = adj.cpu().numpy()
+        graph = nx.from_numpy_array(adj_matrix)
+        return nx.community.louvain_communities(graph, seed=42)
+    
+    def normalize_dict_values(self, modularities):
+        values = np.array(list(modularities.values()))
+        mean = np.mean(values)
+        std = np.std(values)
+        normalized = {k: (v - mean) / std for k, v in modularities.items()}
+        return normalized
+    
+    def get_comm_modularity(self, adj, nodes, binary=False, threshold=0.5): 
+        d_adj = copy.deepcopy(adj)
+        if not binary: 
+            d_adj = (d_adj > threshold).float()
+
+        m = torch.sum(d_adj).item() // 2
+        degrees = torch.sum(d_adj, dim=1)
+
+        total = 0
+        for i in nodes: 
+            for j in nodes:  
+                total += d_adj[i][j] - (degrees[i] * degrees[j]) / (2 * m)
+
+        return total / (2 * m)  # calculation for modularity within community
+
+    # louvaine community detection
+    def edge_similarity_matrix_louvain_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
+        self._start_timer()
+        S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
+        
+        # numpy bug fix
+        if isinstance(adj, torch.Tensor):
+            adj = adj.cpu()
+        if isinstance(adj_recon, torch.Tensor):
+            adj_recon = adj_recon.cpu()
+
+        communities = self.find_louvain_communities(adj)
+        communities_recon = self.find_louvain_communities(adj_recon)
+
+        modularities_adj = {comm_id: self.get_comm_modularity(adj, nodes) for comm_id, nodes in enumerate(communities)}
+        modularities_adj_recon = {comm_id: self.get_comm_modularity(adj_recon, nodes) for comm_id, nodes in enumerate(communities_recon)}
+
+        modularities_adj = self.normalize_dict_values(modularities_adj)
+        modularities_adj_recon = self.normalize_dict_values(modularities_adj_recon)
+        
+        mapping = {}
+        for comm_id_adj, value_adj in modularities_adj.items():
+            closest_comm_id = min(
+                modularities_adj_recon.keys(),
+                key=lambda comm_id_recon: abs(modularities_adj_recon[comm_id_recon] - value_adj)
+            )
+            mapping[comm_id_adj] = closest_comm_id
+            # # Optionally remove the matched `comm_id_recon` to prevent duplicate matches
+            # modularities_adj_recon.pop(closest_comm_id)
+
+        for comm_id, nodes in enumerate(communities):
+            recon_nodes = communities_recon[mapping[comm_id]]
+            for i in nodes:
+                for j in nodes:
+                    if i == j:
+                        for a in recon_nodes:
+                            S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
+                    else:
+                        for a in recon_nodes:
+                            for b in recon_nodes:
+                                if b == a:
+                                    continue
+                                S[i, j, a, b] = (
+                                    adj[i, j] * adj[i, i] * adj[j, j] * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+                                )
+
+        self._stop_timer()
+        return S
+    
+    def find_spectral_communities(self, adj, num_clusters=5): # start with 5 clusters to mirror page rank
+        adj_matrix = adj.cpu().numpy()
+        graph = nx.from_numpy_array(adj_matrix)
+        L = nx.normalized_laplacian_matrix(graph).astype(float)
+        eigvals, eigvecs = eigsh(L, k=num_clusters, which='SM')
+        
+        # using k means to cluster nodes based on eigenvalue strongness
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+        labels = kmeans.fit_predict(eigvecs)
+        
+        # group similar nodes together by their label
+        communities = [set() for _ in range(num_clusters)]
+        for node, label in zip(graph.nodes(), labels):
+            communities[label].add(node)
+        
+        return communities
+    
+    def edge_similarity_matrix_spectral_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
+        self._start_timer()
+        S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
+        
+        # numpy bug fix
+        if isinstance(adj, torch.Tensor):
+            adj = adj.cpu()
+        if isinstance(adj_recon, torch.Tensor):
+            adj_recon = adj_recon.cpu()
+
+        communities = self.find_spectral_communities(adj)
+        communities_recon = self.find_specal_communities(adj_recon)
+
+        # i think we should keep the louvain error feature of modularity. it's a good metric to see how communal a community is 
+        modularities_adj = {comm_id: self.get_comm_modularity(adj, nodes) for comm_id, nodes in enumerate(communities)}
+        modularities_adj_recon = {comm_id: self.get_comm_modularity(adj_recon, nodes) for comm_id, nodes in enumerate(communities_recon)}
+
+        modularities_adj = self.normalize_dict_values(modularities_adj)
+        modularities_adj_recon = self.normalize_dict_values(modularities_adj_recon)
+        
+        mapping = {}
+        for comm_id_adj, value_adj in modularities_adj.items():
+            closest_comm_id = min(
+                modularities_adj_recon.keys(),
+                key=lambda comm_id_recon: abs(modularities_adj_recon[comm_id_recon] - value_adj)
+            )
+            mapping[comm_id_adj] = closest_comm_id
+            # # Optionally remove the matched `comm_id_recon` to prevent duplicate matches
+            # modularities_adj_recon.pop(closest_comm_id)
+
+        for comm_id, nodes in enumerate(communities):
+            recon_nodes = communities_recon[mapping[comm_id]]
+            for i in nodes:
+                for j in nodes:
+                    if i == j:
+                        for a in recon_nodes:
+                            S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
+                    else:
+                        for a in recon_nodes:
+                            for b in recon_nodes:
+                                if b == a:
+                                    continue
+                                S[i, j, a, b] = (
+                                    adj[i, j] * adj[i, i] * adj[j, j] * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+                                )
+
+        self._stop_timer()
+        return S
+
+
 
 
 

@@ -127,8 +127,8 @@ def save_plot(lst, args):
     np.save(array_path, lst)
 
 def train(args, dataloader, model):
-    # set timer
-    start = time.time()
+    # # set timer
+    # start = time.time()
 
     epoch = 1
     optimizer = optim.Adam(list(model.parameters()), lr=args.lr)
@@ -158,8 +158,9 @@ def train(args, dataloader, model):
             scheduler.step()
             break
 
-    end = time.time()
-    length = end - start
+    # end = time.time()
+    # length = end - start
+    length = sim_func_obj._elapsed_time
 
     save_plot(loss_logger, args)
     print("Training length in seconds: ", length)

@@ -127,7 +127,7 @@ class GraphVAE(nn.Module):
                     neigh_sim = sum(pooled)
                     x_new[i, a] += neigh_sim
             norm = torch.norm(x_new)
-            x = x_new / norm
+            x = x_new / (norm + 1e-6)
         return x 
 
     def deg_feature_similarity(self, f1, f2):
@@ -212,9 +212,15 @@ class GraphVAE(nn.Module):
         elif sim_func_obj.sim_func_name == 'page_rank': 
             S = sim_func_obj.edge_similarity_matrix_page_rank_method(adj_data, recon_adj_tensor, adj_features, out_features,
                     self.deg_feature_similarity)
-        elif sim_func_obj.sim_func_name == 'community':
-            S = sim_func_obj.edge_similarity_matrix_community_method(adj_data, recon_adj_tensor, adj_features, out_features,
-                    self.deg_feature_similarity)
+        elif sim_func_obj.sim_func_name == 'spectral':
+            S = sim_func_obj.edge_similarity_matrix_spectral_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                     self.deg_feature_similarity) # louvain method
+        elif sim_func_obj.sim_func_name == 'louvain':
+            # S = sim_func_obj.edge_similarity_matrix_community_method(adj_data, recon_adj_tensor, adj_features, out_features,
+            #         self.deg_feature_similarity) # girvan-newman method (too slow)
+            S = sim_func_obj.edge_similarity_matrix_louvain_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                     self.deg_feature_similarity) # louvain method
+
             
         # initialization strategies
         init_corr = 1 / self.max_num_nodes
@@ -307,4 +313,7 @@ class GraphVAE(nn.Module):
         eps = 1e-6
         adj_pred = torch.clamp(adj_pred, min=eps, max=1 - eps)
         return F.binary_cross_entropy(adj_pred, adj_truth)
+
+
+
 
