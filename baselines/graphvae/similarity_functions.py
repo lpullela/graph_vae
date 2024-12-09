@@ -6,6 +6,7 @@ import time
 import copy
 from scipy.sparse.linalg import eigsh
 from sklearn.cluster import KMeans
+import math
 
 class SimilarityFunctions(): 
 
@@ -69,14 +70,14 @@ class SimilarityFunctions():
                 if bin_key >= 0:
                     bins[bin_key].append(node)
 
-        return bins
+        return degrees, bins
 
     # modified similarity function with binning method
     def edge_similarity_matrix_binning_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
 
         self._start_timer()
-        adj_bins = self.bin_nodes_by_degree(adj)
-        adj_recon_bins = self.bin_nodes_by_degree(adj_recon, binary=False)
+        adj_degrees, adj_bins = self.bin_nodes_by_degree(adj)
+        adj_recon_degrees, adj_recon_bins = self.bin_nodes_by_degree(adj_recon, binary=False)
 
         # for testing purposes in bin density
         n = adj.shape[0]  
@@ -95,21 +96,24 @@ class SimilarityFunctions():
                 adj_recon_nodes = adj_recon_bins[degree]
 
                 for i in adj_nodes:
-                    for j in adj_nodes:
+                    for j in range(self.max_num_nodes):
                         if i == j:
                             # case when i == j
                             for a in adj_recon_nodes:
                                 S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
                         else:
-                            # case when i != j
-                            for a in adj_recon_nodes:
-                                for b in adj_recon_nodes:
-                                    if b == a:
-                                        continue
-                                    S[i, j, a, b] = (
-                                        adj[i, j] * adj[i, i] * adj[j, j]
-                                        * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
-                                    )
+                            deg_j = adj_degrees[j]
+                            if deg_j in adj_recon_bins:
+                                possible_j_matches = adj_recon_bins[deg_j]
+                                # case when i != j
+                                for a in adj_recon_nodes:
+                                    for b in possible_j_matches:
+                                        if b == a:
+                                            continue
+                                        S[i, j, a, b] = (
+                                            adj[i, j] * adj[i, i] * adj[j, j]
+                                            * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+                                        )
 
         self._stop_timer()
         return S
@@ -126,55 +130,57 @@ class SimilarityFunctions():
         rank_dict = nx.pagerank(G)
         return rank_dict
 
-    def binning_page_rank(self, rank_dict, num_bins=5):
-        # bin nodes based on their page rnak values.
-        # sort nodes by page rank
-
-        sorted_ranks = sorted(rank_dict.items(), key=lambda x: x[1])
+    def binning_page_rank(self, rank_dict, nodes_per_bin=5):
+        sorted_ranks_list = sorted(rank_dict.items(), key=lambda x: x[1])
+        sorted_ranks = {node: rank + 1 for rank, (node, _) in enumerate(sorted_ranks_list)}
         binned_dict = {}
-        bin_size = len(rank_dict) // num_bins
+
+        total_nodes = len(rank_dict)
+        num_bins = int(math.ceil(total_nodes/nodes_per_bin))
 
         for bin_index in range(num_bins):
-            start_idx = bin_index * bin_size
-            end_idx = (bin_index + 1) * bin_size if bin_index < num_bins - 1 else len(rank_dict)
+            start_idx = bin_index * nodes_per_bin
+            end_idx = min((bin_index + 1) * nodes_per_bin, total_nodes)
 
-            binned_nodes = [node for node, _ in sorted_ranks[start_idx:end_idx]]
+            binned_nodes = [node for node, rank in sorted_ranks.items() if start_idx < rank - 1 < end_idx]
             binned_dict[bin_index] = binned_nodes
 
-        return binned_dict
+        return sorted_ranks, binned_dict
     
     
     def edge_similarity_matrix_page_rank_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
         self._start_timer()
         rank_dict_adj = self.compute_page_rank(adj)
         rank_dict_adj_recon = self.compute_page_rank(adj_recon)
+        nodes_per_bin = 5
         
-        adj_bins = self.binning_page_rank(rank_dict_adj)
-        adj_recon_bins = self.binning_page_rank(rank_dict_adj_recon)
+        sorted_ranks_adj, adj_bins = self.binning_page_rank(rank_dict_adj, nodes_per_bin=nodes_per_bin)
+        sorted_ranks_adj_recon, adj_recon_bins = self.binning_page_rank(rank_dict_adj_recon, nodes_per_bin=nodes_per_bin)
 
         S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
 
         for rank_bin in adj_bins:
-            if rank_bin in adj_recon_bins:
-                adj_nodes = adj_bins[rank_bin]
-                adj_recon_nodes = adj_recon_bins[rank_bin]
+            adj_nodes = adj_bins[rank_bin]
+            adj_recon_nodes = adj_recon_bins[rank_bin]
 
-                for i in adj_nodes:
-                    for j in adj_nodes:
-                        if i == j:
-                            # case when i == j
-                            for a in adj_recon_nodes:
-                                S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
-                        else:
-                            # case when i != j
-                            for a in adj_recon_nodes:
-                                for b in adj_recon_nodes:
-                                    if b == a:
-                                        continue
-                                    S[i, j, a, b] = (
-                                        adj[i, j] * adj[i, i] * adj[j, j]
-                                        * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
-                                    )
+            for i in adj_nodes:
+                for j in range(self.max_num_nodes):
+                    if i == j:
+                        # case when i == j
+                        for a in adj_recon_nodes:
+                            S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
+                    else:
+                        rank_j = sorted_ranks_adj[j]
+                        possible_j_matches = adj_recon_bins[rank_j//nodes_per_bin]
+                        # case when i != j
+                        for a in adj_recon_nodes:
+                            for b in possible_j_matches:
+                                if b == a:
+                                    continue
+                                S[i, j, a, b] = (
+                                    adj[i, j] * adj[i, i] * adj[j, j]
+                                    * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+                                )
 
         self._stop_timer()
         return S
@@ -368,7 +374,7 @@ class SimilarityFunctions():
             adj_recon = adj_recon.cpu()
 
         communities = self.find_spectral_communities(adj)
-        communities_recon = self.find_specal_communities(adj_recon)
+        communities_recon = self.find_spectral_communities(adj_recon)
 
         # i think we should keep the louvain error feature of modularity. it's a good metric to see how communal a community is 
         modularities_adj = {comm_id: self.get_comm_modularity(adj, nodes) for comm_id, nodes in enumerate(communities)}
