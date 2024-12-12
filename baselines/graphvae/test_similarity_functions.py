@@ -5,13 +5,48 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from collections import defaultdict
 
-# Randomly generate connected graph
-def generate_connected_graph(num_nodes, edge_prob):
-    while True:
-        graph = nx.erdos_renyi_graph(num_nodes, edge_prob)
+def generate_connected_graph(num_nodes, edge_prob, graph_type='erdos_renyi'):
+    """
+        Supported types:
+        - 'erdos_renyi': Erdős–Rényi random graph
+        - 'barabasi_albert': Scale-free network using preferential attachment
+        - 'watts_strogatz': Small-world network
+        - 'random_geometric': Geometric random graph
+    """
+    max_attempts = 100
+    
+    for _ in range(max_attempts):
+        if graph_type == 'erdos_renyi':
+            graph = nx.erdos_renyi_graph(num_nodes, edge_prob)
+        
+        elif graph_type == 'barabasi_albert':
+            # edge_prob here represents the number of edges to attach from a new node to existing nodes, can be tuned
+            m = max(1, int(edge_prob * num_nodes))
+            graph = nx.barabasi_albert_graph(num_nodes, m)
+        
+        elif graph_type == 'watts_strogatz':
+            # edge_prob here represents the probability of rewiring
+            k = max(2, int(edge_prob * num_nodes))
+            graph = nx.watts_strogatz_graph(num_nodes, k, edge_prob)
+        
+        elif graph_type == 'random_geometric':
+            # edge_prob here represents the radius for connecting points
+            graph = nx.random_geometric_graph(num_nodes, edge_prob)
+        
+        else:
+            raise ValueError(f"Unsupported graph type: {graph_type}")
         
         if nx.is_connected(graph):
             return graph
+    
+    graph = nx.erdos_renyi_graph(num_nodes, edge_prob)
+    graph = nx.Graph(graph)
+    
+    if not nx.is_connected(graph):
+        mst = nx.minimum_spanning_tree(nx.complete_graph(graph.nodes()))
+        graph.add_edges_from(mst.edges())
+    
+    return graph
 
 # Simplified similarity functions for the purpose of testing
 def simple_edge_similarity(adj, adj_recon, matching_features, matching_features_recon):
