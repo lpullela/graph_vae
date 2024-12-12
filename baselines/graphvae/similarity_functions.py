@@ -15,6 +15,7 @@ class SimilarityFunctions():
         self.max_num_nodes = max_nodes
         self._timer_start = None  
         self._elapsed_time = 0.0  
+        self.time_stamps = []
 
     def _start_timer(self):
         if self._timer_start is None:
@@ -23,6 +24,7 @@ class SimilarityFunctions():
     def _stop_timer(self):
         if self._timer_start is not None:
             self._elapsed_time += time.time() - self._timer_start
+            self.time_stamps.append(time.time() - self._timer_start)
             self._timer_start = None
 
     def get_elapsed_time(self):
@@ -79,13 +81,13 @@ class SimilarityFunctions():
         adj_degrees, adj_bins = self.bin_nodes_by_degree(adj)
         adj_recon_degrees, adj_recon_bins = self.bin_nodes_by_degree(adj_recon, binary=False)
 
-        # for testing purposes in bin density
-        n = adj.shape[0]  
-        k = len(adj_recon_bins.keys())  
-        nk_ratio = n / k
-        with open("baselines/graphvae/results/nk_ratios.txt", "a") as file:  
-            file.write(f"{nk_ratio}\n")
-        # can delete the above or comment
+        # # for testing purposes in bin density
+        # n = adj.shape[0]  
+        # k = len(adj_recon_bins.keys())  
+        # nk_ratio = n / k
+        # with open("baselines/graphvae/results/nk_ratios.txt", "a") as file:  
+        #     file.write(f"{nk_ratio}\n")
+        # # can delete the above or comment
 
         S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
 
@@ -99,7 +101,7 @@ class SimilarityFunctions():
                     for j in range(self.max_num_nodes):
                         if i == j:
                             # case when i == j
-                            for a in adj_recon_nodes:
+                            for a in adj_recon_nodes: # these should prolly be max
                                 S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
                         else:
                             deg_j = adj_degrees[j]
@@ -130,20 +132,16 @@ class SimilarityFunctions():
         rank_dict = nx.pagerank(G)
         return rank_dict
 
-    def binning_page_rank(self, rank_dict, nodes_per_bin=5):
+    def binning_page_rank(self, rank_dict):
         sorted_ranks_list = sorted(rank_dict.items(), key=lambda x: x[1])
         sorted_ranks = {node: rank + 1 for rank, (node, _) in enumerate(sorted_ranks_list)}
         binned_dict = {}
 
-        total_nodes = len(rank_dict)
-        num_bins = int(math.ceil(total_nodes/nodes_per_bin))
-
-        for bin_index in range(num_bins):
-            start_idx = bin_index * nodes_per_bin
-            end_idx = min((bin_index + 1) * nodes_per_bin, total_nodes)
-
-            binned_nodes = [node for node, rank in sorted_ranks.items() if start_idx < rank - 1 < end_idx]
-            binned_dict[bin_index] = binned_nodes
+        for node, rank in sorted_ranks.items():
+            for key_rank in range(max(1,rank - 2), min(len(rank_dict) + 1, rank + 3)):  # Keys are based on ranks within +-2
+                if not key_rank in binned_dict: 
+                    binned_dict[key_rank] = []
+                binned_dict[key_rank].append(node)
 
         return sorted_ranks, binned_dict
     
@@ -152,10 +150,9 @@ class SimilarityFunctions():
         self._start_timer()
         rank_dict_adj = self.compute_page_rank(adj)
         rank_dict_adj_recon = self.compute_page_rank(adj_recon)
-        nodes_per_bin = 5
-        
-        sorted_ranks_adj, adj_bins = self.binning_page_rank(rank_dict_adj, nodes_per_bin=nodes_per_bin)
-        sorted_ranks_adj_recon, adj_recon_bins = self.binning_page_rank(rank_dict_adj_recon, nodes_per_bin=nodes_per_bin)
+
+        sorted_ranks_adj, adj_bins = self.binning_page_rank(rank_dict_adj)
+        sorted_ranks_adj_recon, adj_recon_bins = self.binning_page_rank(rank_dict_adj_recon)
 
         S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
 
@@ -166,13 +163,13 @@ class SimilarityFunctions():
             for i in adj_nodes:
                 for j in range(self.max_num_nodes):
                     if i == j:
-                        # case when i == j
+                        # Case when i == j
                         for a in adj_recon_nodes:
                             S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
                     else:
                         rank_j = sorted_ranks_adj[j]
-                        possible_j_matches = adj_recon_bins[rank_j//nodes_per_bin]
-                        # case when i != j
+                        possible_j_matches = adj_recon_bins[rank_j]
+                        # Case when i != j
                         for a in adj_recon_nodes:
                             for b in possible_j_matches:
                                 if b == a:
@@ -407,6 +404,51 @@ class SimilarityFunctions():
                                     continue
                                 S[i, j, a, b] = (
                                     adj[i, j] * adj[i, i] * adj[j, j] * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
+                                )
+
+        self._stop_timer()
+        return S
+    
+    def compute_betweenness_centrality(self, adjacency_matrix):
+        if isinstance(adjacency_matrix, torch.Tensor):
+            adjacency_matrix = adjacency_matrix.cpu().numpy()  # Convert to NumPy
+
+        G = nx.from_numpy_array(adjacency_matrix)
+        centrality_dict = nx.betweenness_centrality(G, normalized=True)
+        return centrality_dict
+    
+    def edge_similarity_matrix_betweeness_method(self, adj, adj_recon, matching_features, matching_features_recon, sim_func):
+        self._start_timer()
+        rank_dict_adj = self.compute_betweenness_centrality(adj)
+        rank_dict_adj_recon = self.compute_betweenness_centrality(adj_recon)
+        nodes_per_bin = 5
+        
+        sorted_ranks_adj, adj_bins = self.binning_page_rank(rank_dict_adj)
+        sorted_ranks_adj_recon, adj_recon_bins = self.binning_page_rank(rank_dict_adj_recon)
+
+        S = torch.zeros(self.max_num_nodes, self.max_num_nodes, self.max_num_nodes, self.max_num_nodes)
+
+        for rank_bin in adj_bins:
+            adj_nodes = adj_bins[rank_bin]
+            adj_recon_nodes = adj_recon_bins.get(rank_bin, [])  # Default to an empty list if rank_bin not in adj_recon_bins
+
+            for i in adj_nodes:
+                for j in range(self.max_num_nodes):
+                    if i == j:
+                        # Case when i == j
+                        for a in adj_recon_nodes:
+                            S[i, i, a, a] = adj[i, i] * adj_recon[a, a] * sim_func(matching_features[i], matching_features_recon[a])
+                    else:
+                        rank_j = sorted_ranks_adj[j]
+                        possible_j_matches = adj_recon_bins[rank_j]
+                        # Case when i != j
+                        for a in adj_recon_nodes:
+                            for b in possible_j_matches:
+                                if b == a:
+                                    continue
+                                S[i, j, a, b] = (
+                                    adj[i, j] * adj[i, i] * adj[j, j]
+                                    * adj_recon[a, b] * adj_recon[a, a] * adj_recon[b, b]
                                 )
 
         self._stop_timer()

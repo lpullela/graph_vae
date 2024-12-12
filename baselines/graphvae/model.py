@@ -152,7 +152,7 @@ class GraphVAE(nn.Module):
             out = torch.sum(x, dim=1, keepdim=False)
         return out
     
-    def forward_train_no_matching(self, input_features, adj): # this is purely for benchmarking/control
+    def forward_no_matching(self, input_features, adj): # this is purely for benchmarking/control
         graph_h = input_features.view(-1, self.max_num_nodes * self.max_num_nodes)
         # vae
         h_decode, z_mu, z_lsgms = self.vae(graph_h)
@@ -164,8 +164,8 @@ class GraphVAE(nn.Module):
 
         adj_recon_loss = self.adj_recon_loss(adj_vectorized_var, out[0])
         print('recon: ', adj_recon_loss)
-        print(adj_vectorized_var)
-        print(out[0])
+        #print(adj_vectorized_var)
+        #print(out[0])
 
         loss_kl = -0.5 * torch.sum(1 + z_lsgms - z_mu.pow(2) - z_lsgms.exp())
         loss_kl /= self.max_num_nodes * self.max_num_nodes # normalize
@@ -186,7 +186,7 @@ class GraphVAE(nn.Module):
         #graph_h = self.pool_graph(x)
 
         if sim_func_obj.sim_func_name == 'none': 
-            return self.forward_train_no_matching(input_features, adj)
+            return self.forward_no_matching(input_features, adj)
         
         graph_h = input_features.view(-1, self.max_num_nodes * self.max_num_nodes)
         # vae
@@ -220,6 +220,9 @@ class GraphVAE(nn.Module):
             #         self.deg_feature_similarity) # girvan-newman method (too slow)
             S = sim_func_obj.edge_similarity_matrix_louvain_method(adj_data, recon_adj_tensor, adj_features, out_features,
                      self.deg_feature_similarity) # louvain method
+        elif sim_func_obj.sim_func_name == 'betweeness': 
+            S = sim_func_obj.edge_similarity_matrix_betweeness_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                     self.deg_feature_similarity)
 
             
         # initialization strategies
@@ -247,7 +250,7 @@ class GraphVAE(nn.Module):
         adj_recon_loss = self.adj_recon_loss(adj_vectorized_var, out[0])
         print('recon: ', adj_recon_loss)
         print(adj_vectorized_var)
-        print(out[0])
+        #print(out[0])
 
         loss_kl = -0.5 * torch.sum(1 + z_lsgms - z_mu.pow(2) - z_lsgms.exp())
         loss_kl /= self.max_num_nodes * self.max_num_nodes # normalize
@@ -257,7 +260,7 @@ class GraphVAE(nn.Module):
 
         return loss
 
-    def forward_test(self, input_features, adj, args):
+    def forward_test(self, input_features, adj, args, sim_func_obj):
         self.max_num_nodes = args.max_num_nodes
         # adj_data = torch.zeros(self.max_num_nodes, self.max_num_nodes)
         # adj_data[:4, :4] = torch.FloatTensor([[1,1,0,0], [1,1,1,0], [0,1,1,1], [0,0,1,1]])
@@ -266,6 +269,9 @@ class GraphVAE(nn.Module):
         # adj_data1 = torch.zeros(self.max_num_nodes, self.max_num_nodes)
         # adj_data1 = torch.FloatTensor([[1,1,1,0], [1,1,0,1], [1,0,1,0], [0,1,0,1]])
         # adj_features1 = torch.Tensor([3,3,2,2])
+
+        if sim_func_obj.sim_func_name == 'none': 
+            return self.forward_no_matching(input_features, adj)
 
         graph_h = input_features.view(-1, self.max_num_nodes * self.max_num_nodes)
 
@@ -281,8 +287,31 @@ class GraphVAE(nn.Module):
         adj_data = adj.cpu().data[0]
         adj_features = torch.sum(adj_data, 1)
 
-        S = self.edge_similarity_matrix(adj_data, recon_adj_tensor, adj_features, out_features,
-                self.deg_feature_similarity)
+        # S = self.edge_similarity_matrix(adj_data, recon_adj_tensor, adj_features, out_features,
+        #         self.deg_feature_similarity)
+        if sim_func_obj.sim_func_name == 'original':
+            S = sim_func_obj.edge_similarity_matrix(adj_data, recon_adj_tensor, adj_features, out_features,
+                    self.deg_feature_similarity)
+        elif sim_func_obj.sim_func_name == 'binned': 
+            S = sim_func_obj.edge_similarity_matrix_binning_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                    self.deg_feature_similarity)
+        elif sim_func_obj.sim_func_name == 'page_rank': 
+            S = sim_func_obj.edge_similarity_matrix_page_rank_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                    self.deg_feature_similarity)
+        elif sim_func_obj.sim_func_name == 'spectral':
+            S = sim_func_obj.edge_similarity_matrix_spectral_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                     self.deg_feature_similarity) # louvain method
+        elif sim_func_obj.sim_func_name == 'louvain':
+            # S = sim_func_obj.edge_similarity_matrix_community_method(adj_data, recon_adj_tensor, adj_features, out_features,
+            #         self.deg_feature_similarity) # girvan-newman method (too slow)
+            S = sim_func_obj.edge_similarity_matrix_louvain_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                     self.deg_feature_similarity) # louvain method
+        elif sim_func_obj.sim_func_name == 'betweeness':
+            # S = sim_func_obj.edge_similarity_matrix_community_method(adj_data, recon_adj_tensor, adj_features, out_features,
+            #         self.deg_feature_similarity) # girvan-newman method (too slow)
+            S = sim_func_obj.edge_similarity_matrix_betweeness_method(adj_data, recon_adj_tensor, adj_features, out_features,
+                        self.deg_feature_similarity) # louvain method
+
         
         # initialization strategies
         init_corr = 1 / self.max_num_nodes
@@ -298,7 +327,7 @@ class GraphVAE(nn.Module):
         print('col: ', col_ind)
 
         permuted_adj = self.permute_adj(adj_data, row_ind, col_ind)
-        print('permuted: ', permuted_adj)
+        #print('permuted: ', permuted_adj)
 
         adj_recon_loss = self.adj_recon_loss(permuted_adj, recon_adj_tensor)
         print(recon_adj_tensor)

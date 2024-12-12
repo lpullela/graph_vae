@@ -97,7 +97,7 @@ def build_model(args, max_num_nodes):
     model = GraphVAE(input_dim, 64, 256, max_num_nodes)
     return model
 
-def save_result(args, test_loss, training_time): 
+def save_result(args, test_loss, std_loss, training_time, std_time): 
     if isinstance(test_loss, torch.Tensor):
         test_loss = test_loss.item()  
     
@@ -107,7 +107,9 @@ def save_result(args, test_loss, training_time):
 
     with open(file_path, "w") as f:
         f.write(f"Test Loss: {test_loss}\n")
+        f.write(f"Std Loss: {std_loss}\n")
         f.write(f"Training Time: {training_time}\n")
+        f.write(f"STd Training Time: {std_time}\n")
     
     print(f"Test loss saved to {file_path}")
 
@@ -130,7 +132,6 @@ def train(args, dataloader, model):
     # # set timer
     # start = time.time()
 
-    epoch = 1
     optimizer = optim.Adam(list(model.parameters()), lr=args.lr)
     scheduler = MultiStepLR(optimizer, milestones=LR_milestones, gamma=args.lr)
 
@@ -156,21 +157,25 @@ def train(args, dataloader, model):
 
             optimizer.step()
             scheduler.step()
-            break
 
     # end = time.time()
     # length = end - start
     length = sim_func_obj._elapsed_time
+    time_std = np.std(sim_func_obj.time_stamps)
 
     save_plot(loss_logger, args)
     print("Training length in seconds: ", length)
     print("Training length in minutes: ", length/60)
 
-    return length
+    return length/len(sim_func_obj.time_stamps) if length else 0, time_std
 
-def test(args, dataloader, model, time): 
+def test(args, dataloader, model, time, time_std): 
 
-    test_loss = 0
+    test_losses = []
+
+    sim_func_test = SimilarityFunctions(args.similarity_function, args.max_num_nodes)
+
+    # test_loss = 0
     model.eval()
     with torch.no_grad():
         for batch_idx, data in enumerate(dataloader):
@@ -180,11 +185,16 @@ def test(args, dataloader, model, time):
             features = Variable(features).to(device)
             adj_input = Variable(adj_input).to(device)
 
-            test_loss += model.forward_test(features, adj_input, args)
+            loss = model.forward_test(features, adj_input, args, sim_func_test)
+            # test_loss += loss
+            test_losses.append(loss.item())
 
+    test_loss = np.mean(test_losses)
     print("test loss: ", test_loss)
     # save result (test loss) to results dir 
-    save_result(args, test_loss, time)
+
+    std = np.std(test_losses)
+    save_result(args, test_loss, std, time, time_std)
 
     return test_loss
 
@@ -248,11 +258,11 @@ def main():
     graphs_len = len(graphs)
     print('Number of graphs removed due to upper-limit of number of nodes: ', 
             num_graphs_raw - graphs_len)
-    graphs_test = graphs[int(0.8 * graphs_len):]
-    graphs_train = graphs[0:int(0.8*graphs_len)]
+    graphs_test = graphs[int(0.975*graphs_len):] # these ratios for 77 training and 20 testing graphs
+    graphs_train = graphs[0:int(0.05*graphs_len)]
     #graphs_train = graphs
 
-    print('total graph num: {}, training set: {}'.format(len(graphs),len(graphs_train)))
+    print('total graph num: {}, training set: {}, testing set: {}'.format(len(graphs),len(graphs_train), len(graphs_test)))
     print('max number node: {}'.format(max_num_nodes))
 
     dataset = GraphAdjSampler(graphs_train, max_num_nodes, features=prog_args.feature_type)
@@ -272,9 +282,10 @@ def main():
         num_workers=prog_args.num_workers)
     
     model = build_model(prog_args, max_num_nodes).to(device)
-    time = train(prog_args, dataset_loader, model)
+    time, time_std = train(prog_args, dataset_loader, model)
 
-    test(prog_args, dataset_loader_test, model, time)
+
+    test(prog_args, dataset_loader_test, model, time, time_std)
 
 
 if __name__ == '__main__':
