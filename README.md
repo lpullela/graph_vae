@@ -1,5 +1,14 @@
-The original GraphVAE does not have an implementation available, Jiaxuan You, et. al implemented it to benchmark the GraphRNN paper. We adapt thieir implementation of GraphVAE with optimiations.
-To reproduce results, cd into baselines/graphvae, and run ./run_tests.sh
+The original GraphVAE does not have an official implementation available. Jiaxuan You et al. implemented it to benchmark the GraphRNN paper. We have adapted their implementation of GraphVAE with optimizations.
+
+To reproduce the results, navigate to the `baselines/graphvae` directory and run the following command:
+
+```bash
+./run_tests.sh
+```
+
+
+
+BASE REPO INFO:
 
 
 # GraphRNN: Generating Realistic Graphs with Deep Auto-regressive Model
