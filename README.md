@@ -1,4 +1,6 @@
-We adapt the benchmark graphVAE initially implemented in the paper GraphRNN: Generating Realistic Graphs with Deep Auto-regressive Model paper
+The original GraphVAE does not have an implementation available, Jiaxuan You, et. al implemented it to benchmark the GraphRNN paper. We adapt thieir implementation of GraphVAE with optimiations.
+
+
 
 # GraphRNN: Generating Realistic Graphs with Deep Auto-regressive Model
 This repository is the official PyTorch implementation of GraphRNN, a graph generative model using auto-regressive model.
