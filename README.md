@@ -1,5 +1,5 @@
 The original GraphVAE does not have an implementation available, Jiaxuan You, et. al implemented it to benchmark the GraphRNN paper. We adapt thieir implementation of GraphVAE with optimiations.
-
+To reproduce results, cd into baselines/graphvae, and run ./run_tests.sh
 
 
 # GraphRNN: Generating Realistic Graphs with Deep Auto-regressive Model
